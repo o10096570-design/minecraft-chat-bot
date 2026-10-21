@@ -3,7 +3,13 @@ const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const SECRET = process.env.WEBHOOK_SECRET;
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const CHANNEL = "@minecraftrapidnews";
-const STICKERS = [];
+const STICKERS = [
+  "CAACAgIAAxkBAANuatiYdR4vPqa45BPEvKqZL3CNr3EAAlQpAAJb8qFIcnjAbs6G8AQ9BA",
+  "CAACAgIAAxkBAANsatiYbgWstP4LthlGhkRr3qjAYDUAAigpAAL5a6BI6rtwSE431s09BA",
+  "CAACAgUAAxkBAANoatiYQhIw0K5shoPlhO_Ha36SftwAAr8VAAI8LRFV5WZcNMODbuM9BA",
+  "CAACAgUAAxkBAANqatiYX4usx1eIpSqSZDeTyP_h3isAAvkcAAKqoAhVH2OsvoRSiWw9BA",
+  "CAACAgUAAxkBAANmatiYNvVVn-1AWylmTy49q9L-Cy4AAkYOAAJYLvFW5VXT8SSDGrA9BA",
+];
 
 const SYSTEM = `You are the Minecraft Rapid chat bot. Your owner and creator is Dhruv.
 Answer Minecraft questions (Java and Bedrock, mobile and PC): crafting, redstone, mods, seeds, tips, commands.
@@ -139,6 +145,13 @@ export default async function handler(req, res) {
         if (msg?.sticker && String(msg.chat.id) === process.env.OWNER_CHAT_ID) {
       await tg("sendMessage", { chat_id: msg.chat.id, text: msg.sticker.file_id });
     }
+        if (msg?.text === "/stickers" && String(msg.chat.id) === process.env.OWNER_CHAT_ID) {
+      for (let i = 0; i < STICKERS.length; i++) {
+        await tg("sendMessage", { chat_id: msg.chat.id, text: `Sticker ${i + 1}` });
+        await tg("sendSticker", { chat_id: msg.chat.id, sticker: STICKERS[i] });
+      }
+      return res.status(200).send("ok");
+    }
     if (msg?.text) {
       const chatId = msg.chat.id;
       const isPrivate = msg.chat.type === "private";
@@ -159,6 +172,12 @@ export default async function handler(req, res) {
           let reply = (await answer(text)).slice(0, 3800);
           if (Math.random() < 0.3) reply += `\n\nDaily Minecraft news: ${CHANNEL}`;
           await tg("sendMessage", { chat_id: chatId, text: reply });
+                 if (STICKERS.length && Math.random() < 0.15) {
+            await tg("sendSticker", {
+              chat_id: chatId,
+              sticker: STICKERS[Math.floor(Math.random() * STICKERS.length)],
+            });
+          }
         }
       }
     }
