@@ -1,7 +1,7 @@
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const SECRET = process.env.WEBHOOK_SECRET;
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const CHANNEL = "@minecraftrapidnews";
 
 const SYSTEM = `You are the Minecraft Rapid chat bot. Your owner and creator is Dhruv.
