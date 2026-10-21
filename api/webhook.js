@@ -3,6 +3,7 @@ const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const SECRET = process.env.WEBHOOK_SECRET;
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const CHANNEL = "@minecraftrapidnews";
+const STICKERS = [];
 
 const SYSTEM = `You are the Minecraft Rapid chat bot. Your owner and creator is Dhruv.
 Answer Minecraft questions (Java and Bedrock, mobile and PC): crafting, redstone, mods, seeds, tips, commands.
@@ -135,6 +136,9 @@ export default async function handler(req, res) {
 
   try {
     const msg = req.body?.message;
+        if (msg?.sticker && String(msg.chat.id) === process.env.OWNER_CHAT_ID) {
+      await tg("sendMessage", { chat_id: msg.chat.id, text: msg.sticker.file_id });
+    }
     if (msg?.text) {
       const chatId = msg.chat.id;
       const isPrivate = msg.chat.type === "private";
