@@ -134,6 +134,42 @@ async function answer(text) {
   return `😅 Aaj ka AI limit abhi khatam ho gaya hai. Thodi der baad dobara try karo ⏳\n\n📢 Tab tak news dekho: ${CHANNEL}`;
 }
 
+const STICKER_MOODS = { sad: [0], cool: [1], pro: [2], hello: [3], cute: [4] };
+
+const MOOD_WORDS = {
+  hello: ["hi", "hii", "hello", "hey", "namaste", "hlo"],
+  sad: ["sad", "dukhi", "rona", "udas", "bura", "haar", "😢", "😭"],
+  pro: ["pro", "op", "best", "master", "expert", "boss", "insane", "legend"],
+  cool: ["cool", "mast", "awesome", "nice", "badhiya", "sahi", "lit", "mazza"],
+  cute: ["cute", "pyara", "love", "thanks", "thank", "shukriya", "❤️", "🥰"],
+};
+
+function pickSticker(text) {
+  const t = text.toLowerCase();
+  const words = t.match(/[a-z]+/g) || [];
+  let mood = null;
+  for (const m of Object.keys(MOOD_WORDS)) {
+    const hit = MOOD_WORDS[m].some((k) =>
+      /^[a-z]+$/.test(k) ? words.includes(k) : t.includes(k)
+    );
+    if (hit) {
+      mood = m;
+      break;
+    }
+  }
+  if (mood) {
+    if (Math.random() < 0.6) {
+      const ids = STICKER_MOODS[mood];
+      return STICKERS[ids[Math.floor(Math.random() * ids.length)]];
+    }
+    return null;
+  }
+  if (Math.random() < 0.08) {
+    const pool = [1, 2, 4];
+    return STICKERS[pool[Math.floor(Math.random() * pool.length)]];
+  }
+  return null;
+}
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(200).send("Bot chal raha hai");
   if (SECRET && req.headers["x-telegram-bot-api-secret-token"] !== SECRET) {
@@ -172,12 +208,10 @@ export default async function handler(req, res) {
           let reply = (await answer(text)).slice(0, 3800);
           if (Math.random() < 0.3) reply += `\n\nDaily Minecraft news: ${CHANNEL}`;
           await tg("sendMessage", { chat_id: chatId, text: reply });
-                 if (STICKERS.length && Math.random() < 0.15) {
-            await tg("sendSticker", {
-              chat_id: chatId,
-              sticker: STICKERS[Math.floor(Math.random() * STICKERS.length)],
-            });
-          }
+                     const sticker = pickSticker(text);
+          if (sticker) {
+            await tg("sendSticker", { chat_id: chatId, sticker });
+          }      
         }
       }
     }
