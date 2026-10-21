@@ -29,6 +29,7 @@ async function askGemini(text) {
     }
   );
   const data = await r.json();
+  if (!r.ok) return "Gemini error: " + (data?.error?.message || r.status);
   return data?.candidates?.[0]?.content?.parts?.[0]?.text || "Abhi jawab nahi de paya, thodi der baad try karo.";
 }
 
