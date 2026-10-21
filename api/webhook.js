@@ -29,9 +29,12 @@ async function askGemini(text) {
     }
   );
   const data = await r.json();
-  if (!r.ok) return "Gemini error: " + (data?.error?.message || r.status);
-  return data?.candidates?.[0]?.content?.parts?.[0]?.text || "Abhi jawab nahi de paya, thodi der baad try karo.";
+  if (!r.ok) throw new Error(data?.error?.message || r.status);
+  const out = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!out) throw new Error("empty reply");
+  return out;
 }
+
 async function askGroq(text) {
   const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
@@ -52,14 +55,6 @@ async function askGroq(text) {
   return data.choices[0].message.content;
 }
 
-async function askAIOld(text) {
-  try {
-    return await askGroq(text);
-  } catch (e) {
-    console.error("Groq fail:", e.message);
-    return await askGemini(text);
-  }
-}
 async function askOpenRouter(text) {
   const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -80,19 +75,6 @@ async function askOpenRouter(text) {
   return data.choices[0].message.content;
 }
 
-async function askAI(text) {
-  try {
-    return await askGroq(text);
-  } catch (e) {
-    console.error("Groq fail:", e.message);
-  }
-  try {
-    return await askOpenRouter(text);
-  } catch (e) {
-    console.error("OpenRouter fail:", e.message);
-  }
-  return await askGemini(text);
-}
 function quickReply(text) {
   const t = text.toLowerCase().trim();
   if (t.includes("channel") && (t.includes("link") || t.includes("join"))) {
@@ -111,19 +93,43 @@ function quickReply(text) {
   return null;
 }
 
+const providers = [
+  ["Groq", askGroq],
+  ["OpenRouter", askOpenRouter],
+  ["Gemini", askGemini],
+];
+
 async function answer(text) {
   const quick = quickReply(text);
   if (quick) return quick;
-  const ai = await askAI(text);
-  if (ai.startsWith("Gemini error")) {
-    console.error(ai);
-    return `😅 Aaj ka AI limit abhi khatam ho gaya hai. Thodi der baad dobara try karo ⏳\n\n📢 Tab tak news dekho: ${CHANNEL}`;
+
+  const errors = [];
+  for (const [name, fn] of providers) {
+    try {
+      return await fn(text);
+    } catch (e) {
+      errors.push(`${name}: ${e.message}`);
+    }
   }
-  return ai;
+
+  console.error(errors.join(" | "));
+  const owner = process.env.OWNER_CHAT_ID;
+  if (owner) {
+    try {
+      await tg("sendMessage", {
+        chat_id: owner,
+        text: ("⚠️ Bot error (teeno AI fail):\n" + errors.join("\n")).slice(0, 3500),
+      });
+    } catch (e) {
+      console.error("Owner alert fail:", e.message);
+    }
+  }
+  return `😅 Aaj ka AI limit abhi khatam ho gaya hai. Thodi der baad dobara try karo ⏳\n\n📢 Tab tak news dekho: ${CHANNEL}`;
 }
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(200).send("Bot chal raha hai");
-    if (SECRET && req.headers["x-telegram-bot-api-secret-token"] !== SECRET) {
+  if (SECRET && req.headers["x-telegram-bot-api-secret-token"] !== SECRET) {
     return res.status(401).send("no");
   }
 
