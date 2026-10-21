@@ -137,7 +137,7 @@ async function answer(text) {
 const STICKER_MOODS = { sad: [0], cool: [1], pro: [2], hello: [3], cute: [4] };
 
 const MOOD_WORDS = {
-  hi: ["hi", "hii", "hello", "hey", "namaste", "hlo"],
+  hello: ["hi", "hii", "hello", "hey", "namaste", "hlo"],
   sad: ["sad", "dukhi", "rona", "udas", "bura", "haar", "😢", "😭"],
   pro: ["pro", "op", "best", "master", "expert", "boss", "insane", "legend"],
   cool: ["cool", "mast", "awesome", "nice", "badhiya", "sahi", "lit", "mazza"],
