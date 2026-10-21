@@ -32,7 +32,34 @@ async function askGemini(text) {
   if (!r.ok) return "Gemini error: " + (data?.error?.message || r.status);
   return data?.candidates?.[0]?.content?.parts?.[0]?.text || "Abhi jawab nahi de paya, thodi der baad try karo.";
 }
+async function askGroq(text) {
+  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: text },
+      ],
+    }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data?.error?.message || r.status);
+  return data.choices[0].message.content;
+}
 
+async function askAI(text) {
+  try {
+    return await askGroq(text);
+  } catch (e) {
+    console.error("Groq fail:", e.message);
+    return await askGemini(text);
+  }
+}
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(200).send("Bot chal raha hai");
     if (SECRET && req.headers["x-telegram-bot-api-secret-token"] !== SECRET) {
@@ -58,7 +85,7 @@ export default async function handler(req, res) {
         }
         if (text) {
           await tg("sendChatAction", { chat_id: chatId, action: "typing" });
-          let reply = (await askGemini(text)).slice(0, 3800);
+          let reply = (await askAI(text)).slice(0, 3800);
           if (Math.random() < 0.3) reply += `\n\nDaily Minecraft news: ${CHANNEL}`;
           await tg("sendMessage", { chat_id: chatId, text: reply });
         }
