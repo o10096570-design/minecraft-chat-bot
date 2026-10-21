@@ -93,6 +93,34 @@ async function askAI(text) {
   }
   return await askGemini(text);
 }
+function quickReply(text) {
+  const t = text.toLowerCase().trim();
+  if (t.includes("channel") && (t.includes("link") || t.includes("join"))) {
+    return `📢 Daily Minecraft news aur tips yahan milte hain: ${CHANNEL}`;
+  }
+  const ownerQ = ["tumhara owner", "tera owner", "kisne banaya", "who made you", "who created you", "your owner"];
+  if (ownerQ.some((q) => t.includes(q))) {
+    return "👤 Mujhe Dhruv ne banaya hai, wahi mere owner hain.";
+  }
+  if (["hi", "hii", "hello", "hey"].includes(t)) {
+    return "👋 Hi! Minecraft ka koi bhi sawaal pucho ⛏️";
+  }
+  if (t.startsWith("/help")) {
+    return `ℹ️ Mujhse Minecraft ka koi bhi sawaal pucho (crafting, redstone, seeds, tips).\n👥 Group mein /ask likh ke pucho.\n📢 News: ${CHANNEL}`;
+  }
+  return null;
+}
+
+async function answer(text) {
+  const quick = quickReply(text);
+  if (quick) return quick;
+  const ai = await askAI(text);
+  if (ai.startsWith("Gemini error")) {
+    console.error(ai);
+    return `😅 Aaj ka AI limit abhi khatam ho gaya hai. Thodi der baad dobara try karo ⏳\n\n📢 Tab tak news dekho: ${CHANNEL}`;
+  }
+  return ai;
+}
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(200).send("Bot chal raha hai");
     if (SECRET && req.headers["x-telegram-bot-api-secret-token"] !== SECRET) {
@@ -118,7 +146,7 @@ export default async function handler(req, res) {
         }
         if (text) {
           await tg("sendChatAction", { chat_id: chatId, action: "typing" });
-          let reply = (await askAI(text)).slice(0, 3800);
+          let reply = (await answer(text)).slice(0, 3800);
           if (Math.random() < 0.3) reply += `\n\nDaily Minecraft news: ${CHANNEL}`;
           await tg("sendMessage", { chat_id: chatId, text: reply });
         }
