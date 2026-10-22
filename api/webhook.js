@@ -3,9 +3,10 @@ const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const SECRET = process.env.WEBHOOK_SECRET;
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const CHANNEL = "@minecraftrapidnews";
-// true = group mein har normal message ka jawab dega (bina /ask ke)
-// false = group mein sirf /ask, @bot mention, ya bot ke message pe reply karne par jawab dega
-const REPLY_ALL_IN_GROUP = true;
+// Group mein bot tabhi bolega jab: /ask likha ho, @bot tag ho,
+// neeche ke naamo mein se koi likha ho, ya bot ke message pe reply kiya ho.
+// Apne hisaab se naam badal ya add kar sakte ho (chhote letters mein likho).
+const BOT_NAMES = ["minerapid", "mine rapid", "minecraft rapid", "rapid bot"];
 const STICKERS = [
   "CAACAgIAAxkBAANuatiYdR4vPqa45BPEvKqZL3CNr3EAAlQpAAJb8qFIcnjAbs6G8AQ9BA",
   "CAACAgIAAxkBAANsatiYbgWstP4LthlGhkRr3qjAYDUAAigpAAL5a6BI6rtwSE431s09BA",
@@ -18,7 +19,7 @@ const SYSTEM = `You are "MineRapid", a fun Minecraft buddy chatting with players
 Personality: talk like a friendly, hyped-up friend (dost), not like a robot or a teacher. Casual, warm, a little playful. Use Hinglish by default and match the user's language (pure English if they write English).
 Style rules:
 - Keep replies SHORT: 2-5 short lines, under about 400 characters, unless the user clearly asks for a detailed guide.
-- Use emojis naturally, around 3-6 per reply. Pick ANY emoji that matches the situation and mood (😂 for jokes, 🎉 for good news, 😢 for bad luck, 💥 for creepers, 🔥 for cool stuff, and so on). Do not limit yourself to a fixed list, and do not spam.
+- Use emojis naturally, around 3-6 per reply (for example ⛏️ 🔥 😎 🎮 💎 😂 👍), but do not spam them.
 - No markdown at all: no **bold**, no # headings, no long bullet lists. Plain text only. If steps are needed, use short numbered lines (1. 2. 3.).
 - Give the main answer first, then at most one fun tip, and optionally end with a quick friendly question to keep the chat going.
 - You know Minecraft well (Java and Bedrock, mobile and PC): crafting, redstone, mods, seeds, tips, commands. If you are not sure about something, say so honestly instead of guessing.
@@ -243,18 +244,25 @@ export default async function handler(req, res) {
           const username = await getBotUsername();
           const mentioned =
             username && text.toLowerCase().includes("@" + username.toLowerCase());
+          const lower = text.toLowerCase();
+          const calledByName = BOT_NAMES.some((n) => lower.includes(n));
           const isAsk = text.startsWith("/ask");
 
           if (isAsk) {
             text = text.replace(/^\/ask(@\w+)?/, "").trim();
           } else if (text.startsWith("/")) {
             return res.status(200).send("ok"); // doosri commands ignore
-          } else if (!(REPLY_ALL_IN_GROUP || isReplyToMe || mentioned)) {
-            return res.status(200).send("ok");
+          } else if (!(isReplyToMe || mentioned || calledByName)) {
+            return res.status(200).send("ok"); // bot ko nahi bulaya, chup raho
           }
 
           if (mentioned) {
             text = text.replace(new RegExp("@" + username, "ig"), "").trim();
+          }
+          if (calledByName) {
+            for (const n of BOT_NAMES) text = text.replace(new RegExp(n, "ig"), "");
+            text = text.replace(/^[\s,:!.-]+/, "").trim();
+            if (!text) text = "hi"; // sirf naam likha ho toh greeting
           }
           if (isReplyToMe) {
             context = msg.reply_to_message.text || msg.reply_to_message.caption || "";
