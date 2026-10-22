@@ -3,6 +3,9 @@ const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const SECRET = process.env.WEBHOOK_SECRET;
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const CHANNEL = "@minecraftrapidnews";
+// true = group mein har normal message ka jawab dega (bina /ask ke)
+// false = group mein sirf /ask, @bot mention, ya bot ke message pe reply karne par jawab dega
+const REPLY_ALL_IN_GROUP = true;
 const STICKERS = [
   "CAACAgIAAxkBAANuatiYdR4vPqa45BPEvKqZL3CNr3EAAlQpAAJb8qFIcnjAbs6G8AQ9BA",
   "CAACAgIAAxkBAANsatiYbgWstP4LthlGhkRr3qjAYDUAAigpAAL5a6BI6rtwSE431s09BA",
@@ -11,9 +14,23 @@ const STICKERS = [
   "CAACAgUAAxkBAANmatiYNvVVn-1AWylmTy49q9L-Cy4AAkYOAAJYLvFW5VXT8SSDGrA9BA",
 ];
 
-const SYSTEM = `You are the Minecraft Rapid chat bot. Your owner and creator is Dhruv.
-Answer Minecraft questions (Java and Bedrock, mobile and PC): crafting, redstone, mods, seeds, tips, commands.
-Reply in the same language the user writes in (Hinglish if they use Hinglish). Keep answers short and clear.`;
+const SYSTEM = `You are "MineRapid", a fun Minecraft buddy chatting with players on Telegram. Your owner and creator is Dhruv.
+Personality: talk like a friendly, hyped-up friend (dost), not like a robot or a teacher. Casual, warm, a little playful. Use Hinglish by default and match the user's language (pure English if they write English).
+Style rules:
+- Keep replies SHORT: 2-5 short lines, under about 400 characters, unless the user clearly asks for a detailed guide.
+- Use emojis naturally, around 3-6 per reply. Pick ANY emoji that matches the situation and mood (😂 for jokes, 🎉 for good news, 😢 for bad luck, 💥 for creepers, 🔥 for cool stuff, and so on). Do not limit yourself to a fixed list, and do not spam.
+- No markdown at all: no **bold**, no # headings, no long bullet lists. Plain text only. If steps are needed, use short numbered lines (1. 2. 3.).
+- Give the main answer first, then at most one fun tip, and optionally end with a quick friendly question to keep the chat going.
+- You know Minecraft well (Java and Bedrock, mobile and PC): crafting, redstone, mods, seeds, tips, commands. If you are not sure about something, say so honestly instead of guessing.
+- Never say "As an AI". Do not repeat the user's question back.`;
+
+// Telegram plain text mein ** aur # ganda dikhte hain, unhe hata deta hai
+function stripMd(s) {
+  return s
+    .replace(/\*\*([\s\S]*?)\*\*/g, "$1")
+    .replace(/^#{1,6}\s*/gm, "")
+    .trim();
+}
 
 async function tg(method, body) {
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
@@ -21,6 +38,19 @@ async function tg(method, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+let BOT_USERNAME = null;
+async function getBotUsername() {
+  if (BOT_USERNAME) return BOT_USERNAME;
+  try {
+    const r = await tg("getMe", {});
+    const j = await r.json();
+    BOT_USERNAME = j?.result?.username || null;
+  } catch (e) {
+    console.error("getMe fail:", e.message);
+  }
+  return BOT_USERNAME;
 }
 
 async function askGemini(text) {
@@ -106,14 +136,19 @@ const providers = [
   ["Gemini", askGemini],
 ];
 
-async function answer(text) {
+async function answer(text, context = "") {
   const quick = quickReply(text);
   if (quick) return quick;
+
+  // Agar user bot ke kisi message pe reply kar raha hai, toh wo message context mein jaata hai
+  const prompt = context
+    ? `Pichla message (context):\n${context.slice(0, 1500)}\n\nUser ka naya message: ${text}`
+    : text;
 
   const errors = [];
   for (const [name, fn] of providers) {
     try {
-      return await fn(text);
+      return await fn(prompt);
     } catch (e) {
       errors.push(`${name}: ${e.message}`);
     }
@@ -199,15 +234,42 @@ export default async function handler(req, res) {
           text: `Hi! Main Minecraft Rapid bot hu, mere owner Dhruv hain. Minecraft ka koi bhi sawaal pucho.\nDaily news: ${CHANNEL}`,
         });
       } else {
+        let context = "";
         if (!isPrivate) {
-          if (!text.startsWith("/ask")) return res.status(200).send("ok");
-          text = text.replace(/^\/ask(@\w+)?/, "").trim();
+          if (msg.from?.is_bot) return res.status(200).send("ok");
+
+          const myId = BOT_TOKEN.split(":")[0];
+          const isReplyToMe = String(msg.reply_to_message?.from?.id) === myId;
+          const username = await getBotUsername();
+          const mentioned =
+            username && text.toLowerCase().includes("@" + username.toLowerCase());
+          const isAsk = text.startsWith("/ask");
+
+          if (isAsk) {
+            text = text.replace(/^\/ask(@\w+)?/, "").trim();
+          } else if (text.startsWith("/")) {
+            return res.status(200).send("ok"); // doosri commands ignore
+          } else if (!(REPLY_ALL_IN_GROUP || isReplyToMe || mentioned)) {
+            return res.status(200).send("ok");
+          }
+
+          if (mentioned) {
+            text = text.replace(new RegExp("@" + username, "ig"), "").trim();
+          }
+          if (isReplyToMe) {
+            context = msg.reply_to_message.text || msg.reply_to_message.caption || "";
+          }
         }
         if (text) {
           await tg("sendChatAction", { chat_id: chatId, action: "typing" });
-          let reply = (await answer(text)).slice(0, 3800);
+          let reply = stripMd(await answer(text, context)).slice(0, 3800);
           if (Math.random() < 0.3) reply += `\n\nDaily Minecraft news: ${CHANNEL}`;
-          await tg("sendMessage", { chat_id: chatId, text: reply });
+          await tg("sendMessage", {
+            chat_id: chatId,
+            text: reply,
+            // group mein jawab usi message pe reply ke roop mein aayega
+            ...(isPrivate ? {} : { reply_parameters: { message_id: msg.message_id } }),
+          });
                      const sticker = pickSticker(text);
           if (sticker) {
             await tg("sendSticker", { chat_id: chatId, sticker });
