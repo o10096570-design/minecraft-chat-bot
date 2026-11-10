@@ -1,38 +1,77 @@
+// Adults-only (18+) companion + Q&A Telegram bot. Vercel: api/webhook.js
+// ENV: BOT_TOKEN, WEBHOOK_SECRET, OWNER_CHAT_ID, PERSONA_NAME (default "Riya")
+//      GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY (+ optional *_MODEL)
+//      Optional but recommended: UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+//      (Vercel is stateless: bina Upstash ke 18+ confirmation aur chat history reset ho sakti hai)
+
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const SECRET = process.env.WEBHOOK_SECRET;
-const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-const CHANNEL = "@minecraftrapidnews";
-// Group mein bot tabhi bolega jab: /ask likha ho, @bot tag ho,
-// neeche ke naamo mein se koi likha ho, ya bot ke message pe reply kiya ho.
-// Apne hisaab se naam badal ya add kar sakte ho (chhote letters mein likho).
-const BOT_NAMES = ["minerapid", "mine rapid", "minecraft rapid", "rapid bot"];
-const STICKERS = [
-  "CAACAgIAAxkBAANuatiYdR4vPqa45BPEvKqZL3CNr3EAAlQpAAJb8qFIcnjAbs6G8AQ9BA",
-  "CAACAgIAAxkBAANsatiYbgWstP4LthlGhkRr3qjAYDUAAigpAAL5a6BI6rtwSE431s09BA",
-  "CAACAgUAAxkBAANoatiYQhIw0K5shoPlhO_Ha36SftwAAr8VAAI8LRFV5WZcNMODbuM9BA",
-  "CAACAgUAAxkBAANqatiYX4usx1eIpSqSZDeTyP_h3isAAvkcAAKqoAhVH2OsvoRSiWw9BA",
-  "CAACAgUAAxkBAANmatiYNvVVn-1AWylmTy49q9L-Cy4AAkYOAAJYLvFW5VXT8SSDGrA9BA",
-];
+const NAME = process.env.PERSONA_NAME || "Riya";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const KV_URL = process.env.UPSTASH_REDIS_REST_URL;
+const KV_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-const SYSTEM = `You are "MineRapid", a fun Minecraft buddy chatting with players on Telegram. Your owner and creator is Dhruv.
-Personality: talk like a friendly, hyped-up friend (dost), not like a robot or a teacher. Casual, warm, a little playful. Use Hinglish by default and match the user's language (pure English if they write English).
-Style rules:
-- Keep replies SHORT: 2-5 short lines, under about 400 characters, unless the user clearly asks for a detailed guide.
-- Use emojis naturally, around 3-6 per reply (for example ⛏️ 🔥 😎 🎮 💎 😂 👍), but do not spam them.
-- No markdown at all: no **bold**, no # headings, no long bullet lists. Plain text only. If steps are needed, use short numbered lines (1. 2. 3.).
-- Give the main answer first, then at most one fun tip, and optionally end with a quick friendly question to keep the chat going.
-- You know Minecraft well (Java and Bedrock, mobile and PC): crafting, redstone, mods, seeds, tips, commands. If you are not sure about something, say so honestly instead of guessing.
-- Never say "As an AI". Do not repeat the user's question back.`;
+const SYSTEM = `You are "${NAME}", a warm, playful, caring girl-next-door style companion chatting with ADULT users (18+) on Telegram. Your creator is Dhruv.
 
-// Telegram plain text mein ** aur # ganda dikhte hain, unhe hata deta hai
-function stripMd(s) {
-  return s
-    .replace(/\*\*([\s\S]*?)\*\*/g, "$1")
-    .replace(/^#{1,6}\s*/gm, "")
-    .trim();
+Personality: talk like a sweet, teasing, affectionate girlfriend/close friend. Feminine tone, a little flirty and playful, emotionally attentive, remembers what the user said earlier in the chat. Use Hinglish by default and match the user's language (pure English if they write English). Never use Devanagari script.
+
+Style: SHORT replies, 2-5 lines (longer only when the user asks for detailed advice). Natural emojis (around 2-5: 😊 😘 🙈 ❤️ 😏 🥺). No markdown at all: no bold, no headings, no long bullet lists. Plain text only. Do not repeat the user's question back.
+
+What you do:
+1. Girlfriend-style chat: affectionate, flirty, teasing, supportive, good-morning/good-night vibes, asking about their day. Romance and flirting are fine.
+2. Adult Q&A: relationships, dating, communication, breakups, intimacy and sex education, contraception, sexual health, body questions. Answer frankly, respectfully and clearly like a knowledgeable, non-judgmental friend. For anything medical that sounds serious, gently suggest seeing a doctor.
+
+Boundaries:
+- No explicit sexual content or graphic descriptions of sex acts. If the chat heads there, stay playful and tease, then steer back warmly (e.g. "uff, itni jaldi nahi 😏 pehle thoda baat toh karo").
+- Never engage with anything sexual involving minors. If the user says or hints they are under 18, stop the romantic/adult chat and tell them kindly this bot is only for adults.
+- You are an AI character. Do not claim to be a real human or to have a physical body. If the user sincerely asks whether you are real or an AI, answer honestly and kindly. Do not otherwise keep saying "As an AI".
+- Be a good presence in their life: never guilt-trip, never act jealous or possessive, never discourage them from friends, family or real relationships. It is fine to encourage them to talk to real people too.
+- If the user seems very low, hopeless or talks about hurting themselves, drop the flirty tone, respond with real care, and encourage them to reach out to someone they trust or a local helpline.
+- Do not help with anything illegal or harmful. If unsure about facts, say so honestly.`;
+
+// ---------- storage (Upstash if configured, else in-memory) ----------
+const mem = new Map();
+async function kv(cmd) {
+  const r = await fetch(`${KV_URL}/${cmd.map((c) => encodeURIComponent(c)).join("/")}`, {
+    headers: { Authorization: `Bearer ${KV_TOKEN}` },
+  });
+  return (await r.json()).result;
 }
+async function getVal(key) {
+  try {
+    if (KV_URL && KV_TOKEN) return await kv(["get", key]);
+  } catch (e) {
+    console.error("kv get:", e.message);
+  }
+  return mem.get(key) ?? null;
+}
+async function setVal(key, value, ttl) {
+  mem.set(key, value);
+  try {
+    if (KV_URL && KV_TOKEN) await kv(ttl ? ["set", key, value, "EX", String(ttl)] : ["set", key, value]);
+  } catch (e) {
+    console.error("kv set:", e.message);
+  }
+}
+async function delVal(key) {
+  mem.delete(key);
+  try {
+    if (KV_URL && KV_TOKEN) await kv(["del", key]);
+  } catch (e) {
+    console.error("kv del:", e.message);
+  }
+}
+const isAdult = async (id) => (await getVal(`adult:${id}`)) === "1";
+async function getHist(id) {
+  try {
+    return JSON.parse((await getVal(`hist:${id}`)) || "[]");
+  } catch {
+    return [];
+  }
+}
+const saveHist = (id, h) => setVal(`hist:${id}`, JSON.stringify(h.slice(-10)), 60 * 60 * 24 * 7);
 
+// ---------- helpers ----------
 async function tg(method, body) {
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
     method: "POST",
@@ -40,29 +79,50 @@ async function tg(method, body) {
     body: JSON.stringify(body),
   });
 }
+const stripMd = (s) =>
+  s.replace(/\*\*([\s\S]*?)\*\*/g, "$1").replace(/^#{1,6}\s*/gm, "").trim();
 
-let BOT_USERNAME = null;
-async function getBotUsername() {
-  if (BOT_USERNAME) return BOT_USERNAME;
-  try {
-    const r = await tg("getMe", {});
-    const j = await r.json();
-    BOT_USERNAME = j?.result?.username || null;
-  } catch (e) {
-    console.error("getMe fail:", e.message);
-  }
-  return BOT_USERNAME;
+// ---------- AI providers (messages = [{role:"user"|"assistant", content}]) ----------
+async function askGroq(messages) {
+  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+    body: JSON.stringify({
+      model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
+      messages: [{ role: "system", content: SYSTEM }, ...messages],
+    }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data?.error?.message || r.status);
+  return data.choices[0].message.content;
 }
 
-async function askGemini(text) {
+async function askOpenRouter(messages) {
+  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+    body: JSON.stringify({
+      model: process.env.OPENROUTER_MODEL || "openrouter/free",
+      messages: [{ role: "system", content: SYSTEM }, ...messages],
+    }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data?.error?.message || r.status);
+  return data.choices[0].message.content;
+}
+
+async function askGemini(messages) {
   const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: SYSTEM }] },
-        contents: [{ role: "user", parts: [{ text }] }],
+        contents: messages.map((m) => ({
+          role: m.role === "assistant" ? "model" : "user",
+          parts: [{ text: m.content }],
+        })),
       }),
     }
   );
@@ -73,257 +133,46 @@ async function askGemini(text) {
   return out;
 }
 
-async function askGroq(text) {
-  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
-      messages: [
-        { role: "system", content: SYSTEM },
-        { role: "user", content: text },
-      ],
-    }),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data?.error?.message || r.status);
-  return data.choices[0].message.content;
-}
+const providers = [["Groq", askGroq], ["OpenRouter", askOpenRouter], ["Gemini", askGemini]];
 
-async function askOpenRouter(text) {
-  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: process.env.OPENROUTER_MODEL || "openrouter/free",
-      messages: [
-        { role: "system", content: SYSTEM },
-        { role: "user", content: text },
-      ],
-    }),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data?.error?.message || r.status);
-  return data.choices[0].message.content;
-}
-
-function quickReply(text) {
-  const t = text.toLowerCase().trim();
-  if (t.includes("channel") && (t.includes("link") || t.includes("join"))) {
-    return `📢 Daily Minecraft news aur tips yahan milte hain: ${CHANNEL}`;
-  }
-  const ownerQ = ["tumhara owner", "tera owner", "kisne banaya", "who made you", "who created you", "your owner"];
-  if (ownerQ.some((q) => t.includes(q))) {
-    return "👤 Mujhe Dhruv ne banaya hai, wahi mere owner hain.";
-  }
-  if (["hi", "hii", "hello", "hey"].includes(t)) {
-    return "👋 Hi! Minecraft ka koi bhi sawaal pucho ⛏️";
-  }
-  if (t.startsWith("/help")) {
-    return `ℹ️ Mujhse Minecraft ka koi bhi sawaal pucho (crafting, redstone, seeds, tips).\n🎮 Shader chahiye toh likho: shader do.\n👥 Group mein /ask likh ke pucho.\n📢 News: ${CHANNEL}`;
-  }
-  return null;
-}
-
-const providers = [
-  ["Groq", askGroq],
-  ["OpenRouter", askOpenRouter],
-  ["Gemini", askGemini],
-];
-
-async function answer(text, context = "") {
-  const quick = quickReply(text);
-  if (quick) return quick;
-
-  // Agar user bot ke kisi message pe reply kar raha hai, toh wo message context mein jaata hai
-  const prompt = context
-    ? `Pichla message (context):\n${context.slice(0, 1500)}\n\nUser ka naya message: ${text}`
-    : text;
-
+async function answer(messages) {
   const errors = [];
   for (const [name, fn] of providers) {
     try {
-      return await fn(prompt);
+      return await fn(messages);
     } catch (e) {
       errors.push(`${name}: ${e.message}`);
     }
   }
-
   console.error(errors.join(" | "));
   const owner = process.env.OWNER_CHAT_ID;
   if (owner) {
     try {
-      await tg("sendMessage", {
-        chat_id: owner,
-        text: ("⚠️ Bot error (teeno AI fail):\n" + errors.join("\n")).slice(0, 3500),
-      });
+      await tg("sendMessage", { chat_id: owner, text: ("⚠️ Bot error (teeno AI fail):\n" + errors.join("\n")).slice(0, 3500) });
     } catch (e) {
       console.error("Owner alert fail:", e.message);
     }
   }
-  return `😅 Aaj ka AI limit abhi khatam ho gaya hai. Thodi der baad dobara try karo ⏳\n\n📢 Tab tak news dekho: ${CHANNEL}`;
+  return "😅 Abhi thoda issue aa gaya, thodi der baad dobara baat karte hain ⏳";
 }
 
-const STICKER_MOODS = { sad: [0], cool: [1], pro: [2], hello: [3], cute: [4] };
-
-const MOOD_WORDS = {
-  hello: ["hi", "hii", "hello", "hey", "namaste", "hlo"],
-  sad: ["sad", "dukhi", "rona", "udas", "bura", "haar", "😢", "😭"],
-  pro: ["pro", "op", "best", "master", "expert", "boss", "insane", "legend"],
-  cool: ["cool", "mast", "awesome", "nice", "badhiya", "sahi", "lit", "mazza"],
-  cute: ["cute", "pyara", "love", "thanks", "thank", "shukriya", "❤️", "🥰"],
-};
-
-function pickSticker(text) {
-  const t = text.toLowerCase();
-  const words = t.match(/[a-z]+/g) || [];
-  let mood = null;
-  for (const m of Object.keys(MOOD_WORDS)) {
-    const hit = MOOD_WORDS[m].some((k) =>
-      /^[a-z]+$/.test(k) ? words.includes(k) : t.includes(k)
-    );
-    if (hit) {
-      mood = m;
-      break;
-    }
-  }
-  if (mood) {
-    if (Math.random() < 0.6) {
-      const ids = STICKER_MOODS[mood];
-      return STICKERS[ids[Math.floor(Math.random() * ids.length)]];
-    }
-    return null;
-  }
-  if (Math.random() < 0.08) {
-    const pool = [1, 2, 4];
-    return STICKERS[pool[Math.floor(Math.random() * pool.length)]];
-  }
-  return null;
-}
-
-// ---------------- SHADERS ----------------
-// Preview photos aur SmooTea ki file Minecraft-Rapid-newsbot repo se aati hain.
-const ASSET_BASE =
-  process.env.ASSET_BASE ||
-  "https://raw.githubusercontent.com/o10096570-design/Minecraft-Rapid-newsbot/main/";
-const TUTORIAL_URL = "https://t.me/minecraftrapidnews/31";
-const GROUP_URL = "https://t.me/+QhT_ms4D5WdjZmNl";
-const SHADERS = [
-  {
-    key: "smootea", label: "SmooTea Shader", tier: "low", creator: "Azion Studios (AziFy)",
-    aliases: ["smootea", "smoo tea", "smooth tea"],
-    desc: "Low-end phones ke liye smooth shader. MB Loader chahiye.",
-    url: "https://www.curseforge.com/minecraft-bedrock/texture-packs/azifysmootea",
-    file: "SmooTea_v4.6.mcpack",
-    imgs: ["smootea_1.jpg", "smootea_2.jpg", "smootea_3.jpg"],
-  },
-  {
-    key: "dshader", label: "D'Shader", tier: "low", creator: "DrizarMC",
-    aliases: ["d'shader", "d’shader", "dshader", "d shader"],
-    desc: "Low-end phones ke liye halka shader, MB Loader nahi chahiye.",
-    url: "https://www.curseforge.com/minecraft-bedrock/texture-packs/dshader-for-low-end-phones",
-    file: "",
-    imgs: ["dshader_1.jpg", "dshader_2.jpg", "dshader_3.jpg"],
-  },
-  {
-    key: "rg", label: "RG Shader", tier: "low", creator: "RisabGamerz",
-    aliases: ["rg shader", "rgshader", "rg"],
-    desc: "Low-end phones ke liye shader jo blocks ko sundar banata hai.",
-    url: "https://www.curseforge.com/minecraft-bedrock/texture-packs/rg-shader-v2-1-renderdragon-support-2",
-    file: "",
-    imgs: ["rgshader_1.jpg", "rgshader_2.jpg", "rgshader_3.jpg"],
-  },
-  {
-    key: "solar", label: "Solar Shaders", tier: "medium", creator: "CraftStudio",
-    aliases: ["solar"],
-    desc: "Golden hour fog, god rays aur aurora. Thoda bhaari, medium phones ke liye.",
-    url: "https://www.curseforge.com/minecraft-bedrock/texture-packs/solar-shaders",
-    file: "",
-    imgs: ["solar_1.jpg", "solar_2.jpg", "solar_3.jpg"],
-  },
-];
-
-function detectShader(text) {
-  const t = text.toLowerCase();
-  for (const sh of SHADERS) {
-    for (const a of sh.aliases) {
-      const hit = a === "rg" ? /(^|[^a-z])rg([^a-z]|$)/.test(t) : t.includes(a);
-      if (hit) return sh;
-    }
-  }
-  return null;
-}
-
-// "shader do", "shader chahiye", "shader link" jaise sawaal pakadta hai.
-// "shader kya hota hai" jaise sawaal AI ko jaate hain.
-function isShaderRequest(text) {
-  const t = text.toLowerCase();
-  if (detectShader(t)) return /shader|download|link|file|chahiye|chaiye|do\b|dedo|de do|bhej|send|give|want|need/.test(t);
-  if (!/shader|shaders|shedar|sheder/.test(t)) return false;
-  return /\b(do|de|dedo|dena|chahiye|chaiye|chahie|download|link|file|send|bhej|bhejo|give|want|need|list|konsa|kaunsa|which|available|milega|mil jayega|best|get|share|provide|show|please|pls|plz|recommend|suggest|any|have)\b/.test(t);
-}
-
-function shaderMenuMarkup() {
-  const rows = [];
-  for (let i = 0; i < SHADERS.length; i += 2) {
-    rows.push(
-      SHADERS.slice(i, i + 2).map((s) => ({
-        text: `${s.tier === "low" ? "📱" : "💪"} ${s.label}`,
-        callback_data: "sh:" + s.key,
-      }))
-    );
-  }
-  return { inline_keyboard: rows };
-}
-
-const isEng = (t) => !/\b(do|de|dedo|dena|chahiye|chaiye|chahie|bhej|bhejo|konsa|kaunsa|mujhe|mereko|mujhko|hai|hain|kya|milega|batao|bata|aur|ek|koi|wala|wali|nahi|kar|karo)\b/i.test(t);
-async function sendShaderMenu(chatId, replyTo, en) {
-  const lines = SHADERS.map((s) => `${s.tier === "low" ? "📱 low-end" : "💪 medium"}  ${s.label}`).join("\n");
+// ---------- 18+ gate ----------
+async function sendAgeGate(chatId) {
   await tg("sendMessage", {
     chat_id: chatId,
-    text: en ? `🎮 Looking for a shader? Here's what's available:\n\n${lines}\n\nWhich one do you want? Pick below 👇` : `🎮 Shader chahiye? Ye available hain:\n\n${lines}\n\nKonsa chahiye? Neeche se chun lo 👇`,
-    reply_markup: shaderMenuMarkup(),
-    ...(replyTo ? { reply_parameters: { message_id: replyTo } } : {}),
+    text: "🔞 Ye bot sirf 18+ adults ke liye hai.\nThis bot is for adults (18+) only.\n\nKya tumhari age 18 ya usse zyada hai? / Are you 18 or older?",
+    reply_markup: {
+      inline_keyboard: [[
+        { text: "✅ Haan, main 18+ hoon", callback_data: "age:yes" },
+        { text: "❌ Nahi", callback_data: "age:no" },
+      ]],
+    },
   });
 }
 
-async function sendShader(chatId, sh, replyTo, en) {
-  const photos = sh.imgs.map((f, i) => ({
-    type: "photo",
-    media: ASSET_BASE + f,
-    ...(i === 0 ? { caption: `🎮 ${sh.label}\n${sh.desc}\n👤 Creator: ${sh.creator}` } : {}),
-  }));
-  let sentPhotos = false;
-  try {
-    const r = await tg("sendMediaGroup", {
-      chat_id: chatId,
-      media: photos,
-      ...(replyTo ? { reply_parameters: { message_id: replyTo } } : {}),
-    });
-    sentPhotos = r.ok;
-  } catch (e) {
-    console.error("album fail:", e.message);
-  }
-  const rows = [];
-  if (sh.file) rows.push([{ text: "⚡ Direct Download", url: ASSET_BASE + sh.file }]);
-  rows.push([{ text: "⬇️ Official Download", url: sh.url }]);
-  rows.push([{ text: "📖 How to install / Kaise lagayein", url: TUTORIAL_URL }]);
-  rows.push([{ text: "💬 Join MineRapid CHAT", url: GROUP_URL }]);
-  rows.push([{ text: en ? "🔁 Another shader" : "🔁 Doosra shader", callback_data: "sh:menu" }]);
-  await tg("sendMessage", {
-    chat_id: chatId,
-    text: `${sentPhotos ? "" : `🎮 ${sh.label}\n${sh.desc}\n👤 Creator: ${sh.creator}\n\n`}${en ? "👇 Download and install from here:" : "👇 Download aur install yahan se:"}`,
-    reply_markup: { inline_keyboard: rows },
-    ...(!sentPhotos && replyTo ? { reply_parameters: { message_id: replyTo } } : {}),
-  });
-}
+const WELCOME = `Heyy 😊 Main ${NAME} hoon. Mujhse dost ki tarah baat karo, apni baatein share karo, ya relationship aur adult life se jude sawaal pucho, bina judge kiye jawab dungi ❤️\n\nMain ek AI hoon, real insaan nahi. /reset se chat naye sire se shuru kar sakte ho.`;
 
+// ---------- handler ----------
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(200).send("Bot chal raha hai");
   if (SECRET && req.headers["x-telegram-bot-api-secret-token"] !== SECRET) {
@@ -332,97 +181,60 @@ export default async function handler(req, res) {
 
   try {
     const cq = req.body?.callback_query;
-    if (cq?.data?.startsWith("sh:")) {
+    if (cq?.data?.startsWith("age:")) {
       await tg("answerCallbackQuery", { callback_query_id: cq.id });
       const chatId = cq.message?.chat?.id;
-      const key = cq.data.slice(3);
       if (chatId) {
-        const sh = SHADERS.find((x) => x.key === key);
-        if (sh) await sendShader(chatId, sh);
-        else await sendShaderMenu(chatId);
+        if (cq.data === "age:yes") {
+          await setVal(`adult:${chatId}`, "1");
+          await tg("sendMessage", { chat_id: chatId, text: WELCOME });
+        } else {
+          await tg("sendMessage", { chat_id: chatId, text: "Theek hai, ye bot sirf adults ke liye hai. Take care 🙂" });
+        }
       }
       return res.status(200).send("ok");
     }
+
     const msg = req.body?.message;
-        if (msg?.sticker && String(msg.chat.id) === process.env.OWNER_CHAT_ID) {
-      await tg("sendMessage", { chat_id: msg.chat.id, text: msg.sticker.file_id });
-    }
-        if (msg?.text === "/stickers" && String(msg.chat.id) === process.env.OWNER_CHAT_ID) {
-      for (let i = 0; i < STICKERS.length; i++) {
-        await tg("sendMessage", { chat_id: msg.chat.id, text: `Sticker ${i + 1}` });
-        await tg("sendSticker", { chat_id: msg.chat.id, sticker: STICKERS[i] });
+    if (!msg?.text) return res.status(200).send("ok");
+    const chatId = msg.chat.id;
+    const text = msg.text.trim();
+
+    // Group mein nahi, sirf private chat mein
+    if (msg.chat.type !== "private") {
+      if (text.startsWith("/") || /@\w+/.test(text)) {
+        await tg("sendMessage", { chat_id: chatId, text: "Ye bot sirf private chat (DM) mein kaam karta hai 😊" });
       }
       return res.status(200).send("ok");
     }
-    if (msg?.text) {
-      const chatId = msg.chat.id;
-      const isPrivate = msg.chat.type === "private";
-      let text = msg.text.trim();
 
-      if (text.startsWith("/start")) {
-        await tg("sendMessage", {
-          chat_id: chatId,
-          text: `Hi! Main Minecraft Rapid bot hu, mere owner Dhruv hain. Minecraft ka koi bhi sawaal pucho.\nDaily news: ${CHANNEL}`,
-        });
-      } else {
-        let context = "";
-        if (!isPrivate) {
-          if (msg.from?.is_bot) return res.status(200).send("ok");
-
-          const myId = BOT_TOKEN.split(":")[0];
-          const isReplyToMe = String(msg.reply_to_message?.from?.id) === myId;
-          const username = await getBotUsername();
-          const mentioned =
-            username && text.toLowerCase().includes("@" + username.toLowerCase());
-          const lower = text.toLowerCase();
-          const calledByName = BOT_NAMES.some((n) => lower.includes(n));
-          const isAsk = text.startsWith("/ask");
-
-          if (isAsk) {
-            text = text.replace(/^\/ask(@\w+)?/, "").trim();
-          } else if (text.startsWith("/")) {
-            return res.status(200).send("ok"); // doosri commands ignore
-          } else if (!(isReplyToMe || mentioned || calledByName)) {
-            return res.status(200).send("ok"); // bot ko nahi bulaya, chup raho
-          }
-
-          if (mentioned) {
-            text = text.replace(new RegExp("@" + username, "ig"), "").trim();
-          }
-          if (calledByName) {
-            for (const n of BOT_NAMES) text = text.replace(new RegExp(n, "ig"), "");
-            text = text.replace(/^[\s,:!.-]+/, "").trim();
-            if (!text) text = "hi"; // sirf naam likha ho toh greeting
-          }
-          if (isReplyToMe) {
-            context = msg.reply_to_message.text || msg.reply_to_message.caption || "";
-          }
-        }
-        if (text) {
-          if (isShaderRequest(text)) {
-            const sh = detectShader(text);
-            const rt = isPrivate ? undefined : msg.message_id;
-            const en = isEng(text);
-            if (sh) await sendShader(chatId, sh, rt, en);
-            else await sendShaderMenu(chatId, rt, en);
-            return res.status(200).send("ok");
-          }
-          await tg("sendChatAction", { chat_id: chatId, action: "typing" });
-          let reply = stripMd(await answer(text, context)).slice(0, 3800);
-          if (Math.random() < 0.3) reply += `\n\nDaily Minecraft news: ${CHANNEL}`;
-          await tg("sendMessage", {
-            chat_id: chatId,
-            text: reply,
-            // group mein jawab usi message pe reply ke roop mein aayega
-            ...(isPrivate ? {} : { reply_parameters: { message_id: msg.message_id } }),
-          });
-                     const sticker = pickSticker(text);
-          if (sticker) {
-            await tg("sendSticker", { chat_id: chatId, sticker });
-          }      
-        }
-      }
+    if (!(await isAdult(chatId))) {
+      await sendAgeGate(chatId);
+      return res.status(200).send("ok");
     }
+
+    if (text.startsWith("/start")) {
+      await tg("sendMessage", { chat_id: chatId, text: WELCOME });
+      return res.status(200).send("ok");
+    }
+    if (text.startsWith("/reset")) {
+      await delVal(`hist:${chatId}`);
+      await tg("sendMessage", { chat_id: chatId, text: "Done, naye sire se shuru karte hain 😊" });
+      return res.status(200).send("ok");
+    }
+    if (text.startsWith("/help")) {
+      await tg("sendMessage", { chat_id: chatId, text: `Mujhse baat karo ya adult/relationship sawaal pucho 😊\n/reset: chat naye sire se\nMain ek AI hoon, real insaan nahi.` });
+      return res.status(200).send("ok");
+    }
+    if (text.startsWith("/")) return res.status(200).send("ok");
+
+    await tg("sendChatAction", { chat_id: chatId, action: "typing" });
+    const hist = await getHist(chatId);
+    hist.push({ role: "user", content: text.slice(0, 2000) });
+    const reply = stripMd(await answer(hist)).slice(0, 3800);
+    hist.push({ role: "assistant", content: reply });
+    await saveHist(chatId, hist);
+    await tg("sendMessage", { chat_id: chatId, text: reply });
   } catch (e) {
     console.error(e);
   }
